@@ -1,0 +1,70 @@
+name: dispatch-downstream
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [app-alpha, app-beta]
+    steps:
+      - name: Checkout downstream app
+        uses: actions/checkout@v4
+        with:
+          repository: sagoston/${{ matrix.app }}
+          token: ${{ secrets.DOWNSTREAM_PAT }}
+          path: app
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Configure git identity
+        working-directory: app
+        run: |
+          git config user.name "mathlib-bot"
+          git config user.email "mathlib-bot@users.noreply.github.com"
+
+      - name: Update submodule pointer
+        working-directory: app
+        env:
+          NEW_LIB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cd external/mathlib
+          git fetch origin "$NEW_LIB_SHA"
+          git checkout "$NEW_LIB_SHA"
+          cd ../..
+          if git diff --quiet external/mathlib; then
+            echo "Submodule already at $NEW_LIB_SHA — nothing to do."
+            exit 0
+          fi
+          SHORT_SHA="${NEW_LIB_SHA:0:7}"
+          echo "SHORT_SHA=$SHORT_SHA" >> "$GITHUB_ENV"
+          git checkout -B bump/mathlib
+          git add external/mathlib
+          git commit -m "bump(mathlib): $SHORT_SHA"
+
+      - name: Force-push bump branch
+        if: env.SHORT_SHA != ''
+        working-directory: app
+        run: git push --force origin bump/mathlib
+
+      - name: Open PR if not already open
+        if: env.SHORT_SHA != ''
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_PAT }}
+        run: |
+          set -euo pipefail
+          if gh pr view bump/mathlib --json number --jq .number 2>/dev/null; then
+            echo "PR already open for bump/mathlib — force-push refreshed it."
+          else
+            gh pr create \
+              --base main \
+              --head bump/mathlib \
+              --title "bump(mathlib): $SHORT_SHA" \
+              --body "Automated bump of \`external/mathlib\` to https://github.com/sagoston/mathlib/commit/${{ github.sha }}"
+          fi
