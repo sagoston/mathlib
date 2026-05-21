@@ -59,7 +59,7 @@ jobs:
           GH_TOKEN: ${{ secrets.DOWNSTREAM_PAT }}
         run: |
           set -euo pipefail
-          if gh pr view bump/mathlib --json number --jq .number 2>/dev/null; then
+          if gh pr list --head bump/mathlib --state open --json number --jq '.[0].number' 2>/dev/null | grep -q '[0-9]'; then
             echo "PR already open for bump/mathlib — force-push refreshed it."
           else
             gh pr create \
